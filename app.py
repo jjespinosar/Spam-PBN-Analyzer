@@ -497,6 +497,48 @@ def analizar_spam_vectorizado(df_prepared, config):
 
     return pd.DataFrame(resultados)
 
+# =========================================================
+# FUNCIÓN DE DESCARGA (MOVIDA Y CORREGIDA PARA CACHE)
+# =========================================================
+
+@st.cache_data
+def convert_df_to_excel(df):
+    """Convierte el DataFrame a un objeto BytesIO de Excel para la descarga."""
+    # Renombrar las columnas de análisis antes de la exportación
+    df_export = df.rename(columns={
+        'puntos_riesgo': 'Spam Score (Puntos Riesgo)',
+        'spam_score_100': 'Spam Score (%)',
+        'nivel_riesgo': 'Nivel de Riesgo',
+        'accion_recomendada': 'Accion Recomendada',
+        'spam_factores': 'Factores de Penalizacion/Bonificacion', # <--- Nombre final claro
+        'confianza_analisis': 'Confianza Analisis (0.0-1.0)', # <--- Nombre ajustado
+        'trust_signals': 'Bonificacion Trust',
+        'es_marca_verificada': 'Es Marca Verificada'
+    })
+
+    # Asegurarse de que solo estén las columnas presentes en el DataFrame
+    rename_map = {
+        'Spam Score (Puntos Riesgo)':'puntos_riesgo',
+        'Spam Score (%)':'spam_score_100',
+        'Nivel de Riesgo':'nivel_riesgo',
+        'Accion Recomendada':'accion_recomendada',
+        'Factores de Penalizacion/Bonificacion':'spam_factores',
+        'Confianza Analisis (0.0-1.0)':'confianza_analisis',
+        'Bonificacion Trust':'trust_signals',
+        'Es Marca Verificada':'es_marca_verificada'
+    }
+    
+    # Invertir el mapa para verificar cuáles existen realmente y renombrarlas de nuevo al nombre final
+    final_rename = {v: k for k, v in rename_map.items() if v in df_export.columns}
+    df_export = df_export.rename(columns=final_rename)
+    
+    # Exportar a BytesIO
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_export.to_excel(writer, index=False, sheet_name='Resultados_SPAM_PBN')
+    processed_data = output.getvalue()
+    return processed_data
+
 
 # =========================================================
 # INTERFAZ DE STREAMLIT
@@ -566,6 +608,11 @@ def main():
             # 3. FUSIONAR resultados con el DataFrame original
             df_prepared['target_merge_key_prep'] = df_prepared['target']
 
+            # Añadir las columnas de métricas derivadas que se usan en el análisis (pero que no vienen del original)
+            cols_to_add = ['domain_age_months', 'Pct_Backlinks_Followed', 'RefIP_Diversidad', 'domains_per_month']
+            df_prepared_for_merge = df_prepared[['target_merge_key_prep'] + [c for c in cols_to_add if c in df_prepared.columns]]
+            
+            # Crear el dataframe final
             df_results_merge = pd.merge(
                 df_original.rename(columns={target_col_name: 'target_merge_key_prep_orig'}),
                 df_analysis_results,
@@ -574,6 +621,7 @@ def main():
                 how='left'
             )
             
+            # Limpieza final del DF de resultados para la descarga
             df_resultados = df_results_merge.rename(columns={'target_merge_key_prep_orig': target_col_name})
             df_resultados = df_resultados.drop(columns=['target_merge_key'], errors='ignore')
             
@@ -602,9 +650,22 @@ def main():
                 'spam_factores'
             ]
             
+            # Mapeo inverso de los nombres de columnas de entrada al nombre final que se mostró al usuario en la pre-fusión.
+            reverse_mapping = {
+                'dr': 'Domain Rating',
+                'organic_traffic': 'Organic / Traffic',
+                'refdomains_all': 'Ref. domains / All',
+            }
+            
+            # Renombrar temporalmente las columnas en df_resultados con el nombre que se usó en columnas_finales
+            df_display_temp = df_resultados.copy()
+            for k, v in reverse_mapping.items():
+                if k in df_display_temp.columns and v not in df_display_temp.columns:
+                    df_display_temp = df_display_temp.rename(columns={k: v})
+
             # Filtra las columnas disponibles para evitar errores si las métricas faltan
-            valid_cols = [c for c in columnas_finales if c in df_resultados.columns]
-            df_display = df_resultados[valid_cols].sort_values('spam_score_100', ascending=False, na_position='last').rename(columns={'spam_factores': 'Factores_Penalizacion', 'spam_score_100': 'Spam Score (%)', 'nivel_riesgo': 'Nivel Riesgo'})
+            valid_cols = [c for c in columnas_finales if c in df_display_temp.columns]
+            df_display = df_display_temp[valid_cols].sort_values('spam_score_100', ascending=False, na_position='last').rename(columns={'spam_factores': 'Factores_Penalizacion', 'spam_score_100': 'Spam Score (%)', 'nivel_riesgo': 'Nivel Riesgo'})
 
             # --- MOSTRAR DATAFRAME CON ESTILO DE GRADIENTE ---
             try:
@@ -624,27 +685,6 @@ def main():
             # ------------------------------------------------------
 
             # 5. Botón de Descarga
-            @st.cache_data
-            def convert_df_to_excel(df):
-                """Convierte el DataFrame a un objeto BytesIO de Excel para la descarga."""
-                # Renombrar las columnas finales para la exportación
-                df_export = df.rename(columns={
-                    'puntos_riesgo': 'Spam Score (Puntos Riesgo)',
-                    'spam_score_100': 'Spam Score (%)',
-                    'nivel_riesgo': 'Nivel de Riesgo',
-                    'accion_recomendada': 'Accion Recomendada',
-                    'spam_factores': 'Factores de Penalizacion/Bonificacion', # <--- Nombre final claro
-                    'confianza_analisis': 'Confianza Analisis (%)',
-                    'trust_signals': 'Bonificacion Trust',
-                    'es_marca_verificada': 'Es Marca Verificada'
-                })
-
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    df_export.to_excel(writer, index=False, sheet_name='Resultados_SPAM_PBN')
-                processed_data = output.getvalue()
-                return processed_data
-
             excel_data = convert_df_to_excel(df_resultados)
             
             st.download_button(
