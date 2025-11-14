@@ -498,12 +498,16 @@ def analizar_spam_vectorizado(df_prepared, config):
     return pd.DataFrame(resultados)
 
 # =========================================================
-# FUNCIÓN DE DESCARGA (MOVIDA Y CORREGIDA PARA CACHE)
+# FUNCIÓN DE DESCARGA (CORREGIDA PARA USAR 'openpyxl' en lugar de 'xlsxwriter')
 # =========================================================
 
 @st.cache_data
 def convert_df_to_excel(df):
-    """Convierte el DataFrame a un objeto BytesIO de Excel para la descarga."""
+    """
+    Convierte el DataFrame a un objeto BytesIO de Excel para la descarga.
+    NOTA IMPORTANTE: Se ha cambiado el motor a 'openpyxl' para evitar el error de 'No module named xlsxwriter'.
+    Asegúrate de que 'openpyxl' esté instalado en tu entorno (pip install openpyxl).
+    """
     # Renombrar las columnas de análisis antes de la exportación
     df_export = df.rename(columns={
         'puntos_riesgo': 'Spam Score (Puntos Riesgo)',
@@ -532,9 +536,9 @@ def convert_df_to_excel(df):
     final_rename = {v: k for k, v in rename_map.items() if v in df_export.columns}
     df_export = df_export.rename(columns=final_rename)
     
-    # Exportar a BytesIO
+    # Exportar a BytesIO, usando 'openpyxl'
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_export.to_excel(writer, index=False, sheet_name='Resultados_SPAM_PBN')
     processed_data = output.getvalue()
     return processed_data
